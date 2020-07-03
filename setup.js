@@ -8,7 +8,7 @@ const numNodes = config => config.controlPlane.nodes + config.workers.nodes;
 
 const backend = {
   docker: {
-    image: 'quay.io/footloose/centos7:0.6.0',
+    image: 'quay.io/footloose/centos7:0.6.3',
     // The below is required for dockerd to run smoothly.
     // See also: https://github.com/weaveworks/footloose#running-dockerd-in-container-machines
     privileged: true,
@@ -18,7 +18,7 @@ const backend = {
     }]
   },
   ignite: {
-    image: 'weaveworks/ignite-centos:firekube-pre3',
+    image: 'weaveworks/ignite-centos:7-v0.7.0',
     privileged: false,
     volumes: [],
   },
@@ -74,8 +74,8 @@ const List = items => ({
 });
 
 // Machine returns a WKS machine description from a configuration object describing its public IP, private IP, id, and its role.
-const Machine = ({ id, privateIP, sshPort, role }) => ({
-  apiVersion: 'cluster.k8s.io/v1alpha1',
+const Machine = ({ id, role, kubeVersion }) => ({
+  apiVersion: 'cluster.x-k8s.io/v1alpha3',
   kind: 'Machine',
   metadata: {
     labels: {
@@ -85,19 +85,33 @@ const Machine = ({ id, privateIP, sshPort, role }) => ({
     namespace: 'weavek8sops'
   },
   spec: {
-    providerSpec: {
-      value: {
-        apiVersion: 'baremetalproviderspec/v1alpha1',
-        kind: 'BareMetalMachineProviderSpec',
-        public: {
-          address: '127.0.0.1',
-          port: sshPort,
-        },
-        private: {
-          address: privateIP,
-          port: 22,
-        }
-      }
+    clusterName: "firekube",
+    version: kubeVersion,
+    infrastructureRef: {
+      apiVersion: 'cluster.weave.works/v1alpha3',
+      kind: 'ExistingInfraMachine',
+      name: `${role}-${id}`,
+    },
+    bootstrap: {},
+  }
+});
+
+// Machine returns a WKS machine description from a configuration object describing its public IP, private IP, id, and its role.
+const Eim = ({ id, privateIP, sshPort, role }) => ({
+  apiVersion: 'cluster.weave.works/v1alpha3',
+  kind: 'ExistingInfraMachine',
+  metadata: {
+    name: `${role}-${id}`,
+    namespace: 'weavek8sops'
+  },
+  spec: {
+    public: {
+      address: '127.0.0.1',
+      port: sshPort,
+    },
+    private: {
+      address: privateIP,
+      port: 22,
     }
   }
 });
@@ -111,6 +125,11 @@ if (config.machines !== undefined) {
     const machine = config.machines[i];
     machines.push(Machine({
       id: i,
+      role: 'master',
+      kubeVersion: config.version,
+    }));
+    machines.push(Eim({
+      id: i,
       privateIP: machine.runtimeNetworks[0].ip,
       sshPort: sshPort(machine),
       role: 'master',
@@ -121,13 +140,18 @@ if (config.machines !== undefined) {
     const machine = config.machines[config.controlPlane.nodes + i];
     machines.push(Machine({
       id: i,
+      role: 'worker',
+      kubeVersion: config.version,
+    }));
+    machines.push(Eim({
+      id: i,
       privateIP: machine.runtimeNetworks[0].ip,
       sshPort: sshPort(machine),
       role: 'worker',
     }));
   }
 
-  output.push({ path: 'machines.yaml', value: List(machines) });
+  output.push({ path: 'machines.yaml', value: machines, format: std.Format.YAMLStream });
 }
 
 export default output;
